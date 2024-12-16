@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 from torchvision.io import read_image
-from torchvision.transforms.v2 import resize, to_dtype
+from torchvision.transforms.v2.functional import resize, to_dtype
 
 op = os.path
 

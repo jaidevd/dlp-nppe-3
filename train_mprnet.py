@@ -2,8 +2,8 @@ import os
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from utils import EnhanceDataset, CharbonnierLoss, collate_denoise
-from mprnet import MPRNet
+from utils import EnhanceDataset, collate_denoise
+from mprnet import MPRNet, CharbonnierLoss
 from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

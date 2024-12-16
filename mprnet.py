@@ -8,6 +8,19 @@ import torch
 import torch.nn as nn
 
 
+class CharbonnierLoss(nn.Module):
+    """Charbonnier Loss (L1)"""
+
+    def __init__(self, eps=1e-3):
+        super(CharbonnierLoss, self).__init__()
+        self.eps = eps
+
+    def forward(self, x, y):
+        diff = x - y
+        loss = torch.mean(torch.sqrt((diff * diff) + (self.eps * self.eps)))
+        return loss
+
+
 def conv(in_channels, out_channels, kernel_size, bias=False, stride=1):
     return nn.Conv2d(
         in_channels,
@@ -19,9 +32,9 @@ def conv(in_channels, out_channels, kernel_size, bias=False, stride=1):
     )
 
 
-class ChannelAttentionLayer(nn.Module):
+class CALayer(nn.Module):
     def __init__(self, channel, reduction=16, bias=False):
-        super(ChannelAttentionLayer, self).__init__()
+        super(CALayer, self).__init__()
         # global average pooling: feature --> point
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         # feature channel downscale and upscale --> channel weight
@@ -38,15 +51,15 @@ class ChannelAttentionLayer(nn.Module):
         return x * y
 
 
-class ChannelAttentionBlock(nn.Module):
+class CAB(nn.Module):
     def __init__(self, n_feat, kernel_size, reduction, bias, act):
-        super(ChannelAttentionBlock, self).__init__()
+        super(CAB, self).__init__()
         modules_body = []
         modules_body.append(conv(n_feat, n_feat, kernel_size, bias=bias))
         modules_body.append(act)
         modules_body.append(conv(n_feat, n_feat, kernel_size, bias=bias))
 
-        self.CA = ChannelAttentionLayer(n_feat, reduction, bias=bias)
+        self.CA = CALayer(n_feat, reduction, bias=bias)
         self.body = nn.Sequential(*modules_body)
 
     def forward(self, x):
@@ -56,9 +69,9 @@ class ChannelAttentionBlock(nn.Module):
         return res
 
 
-class SupervisedAttention(nn.Module):
+class SAM(nn.Module):
     def __init__(self, n_feat, kernel_size, bias):
-        super(SupervisedAttention, self).__init__()
+        super(SAM, self).__init__()
         self.conv1 = conv(n_feat, n_feat, kernel_size, bias=bias)
         self.conv2 = conv(n_feat, 3, kernel_size, bias=bias)
         self.conv3 = conv(3, n_feat, kernel_size, bias=bias)
@@ -79,16 +92,14 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
 
         self.encoder_level1 = [
-            ChannelAttentionBlock(n_feat, kernel_size, reduction,
-                                  bias=bias, act=act) for _ in range(2)
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act) for _ in range(2)
         ]
         self.encoder_level2 = [
-            ChannelAttentionBlock(n_feat + scale_unetfeats, kernel_size,
-                                  reduction, bias=bias, act=act)
+            CAB(n_feat + scale_unetfeats, kernel_size, reduction, bias=bias, act=act)
             for _ in range(2)
         ]
         self.encoder_level3 = [
-            ChannelAttentionBlock(
+            CAB(
                 n_feat + (scale_unetfeats * 2),
                 kernel_size,
                 reduction,
@@ -107,8 +118,7 @@ class Encoder(nn.Module):
 
         # Cross Stage Feature Fusion (CSFF)
         if csff:
-            self.csff_enc1 = nn.Conv2d(
-                n_feat, n_feat, kernel_size=1, bias=bias)
+            self.csff_enc1 = nn.Conv2d(n_feat, n_feat, kernel_size=1, bias=bias)
             self.csff_enc2 = nn.Conv2d(
                 n_feat + scale_unetfeats,
                 n_feat + scale_unetfeats,
@@ -122,8 +132,7 @@ class Encoder(nn.Module):
                 bias=bias,
             )
 
-            self.csff_dec1 = nn.Conv2d(
-                n_feat, n_feat, kernel_size=1, bias=bias)
+            self.csff_dec1 = nn.Conv2d(n_feat, n_feat, kernel_size=1, bias=bias)
             self.csff_dec2 = nn.Conv2d(
                 n_feat + scale_unetfeats,
                 n_feat + scale_unetfeats,
@@ -140,45 +149,36 @@ class Encoder(nn.Module):
     def forward(self, x, encoder_outs=None, decoder_outs=None):
         enc1 = self.encoder_level1(x)
         if (encoder_outs is not None) and (decoder_outs is not None):
-            enc1 += self.csff_enc1(
-                encoder_outs[0]
-            ) + self.csff_dec1(decoder_outs[0])
+            enc1 += self.csff_enc1(encoder_outs[0]) + self.csff_dec1(decoder_outs[0])
 
         x = self.down12(enc1)
 
         enc2 = self.encoder_level2(x)
         if (encoder_outs is not None) and (decoder_outs is not None):
-            enc2 += self.csff_enc2(
-                encoder_outs[1]
-            ) + self.csff_dec2(decoder_outs[1])
+            enc2 += self.csff_enc2(encoder_outs[1]) + self.csff_dec2(decoder_outs[1])
 
         x = self.down23(enc2)
 
         enc3 = self.encoder_level3(x)
         if (encoder_outs is not None) and (decoder_outs is not None):
-            enc3 += self.csff_enc3(
-                encoder_outs[2]
-            ) + self.csff_dec3(decoder_outs[2])
+            enc3 += self.csff_enc3(encoder_outs[2]) + self.csff_dec3(decoder_outs[2])
 
         return [enc1, enc2, enc3]
 
 
 class Decoder(nn.Module):
-    def __init__(self, n_feat, kernel_size, reduction, act, bias,
-                 scale_unetfeats):
+    def __init__(self, n_feat, kernel_size, reduction, act, bias, scale_unetfeats):
         super(Decoder, self).__init__()
 
         self.decoder_level1 = [
-            ChannelAttentionBlock(n_feat, kernel_size, reduction,
-                                  bias=bias, act=act) for _ in range(2)
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act) for _ in range(2)
         ]
         self.decoder_level2 = [
-            ChannelAttentionBlock(n_feat + scale_unetfeats, kernel_size,
-                                  reduction, bias=bias, act=act)
+            CAB(n_feat + scale_unetfeats, kernel_size, reduction, bias=bias, act=act)
             for _ in range(2)
         ]
         self.decoder_level3 = [
-            ChannelAttentionBlock(
+            CAB(
                 n_feat + (scale_unetfeats * 2),
                 kernel_size,
                 reduction,
@@ -192,11 +192,9 @@ class Decoder(nn.Module):
         self.decoder_level2 = nn.Sequential(*self.decoder_level2)
         self.decoder_level3 = nn.Sequential(*self.decoder_level3)
 
-        self.skip_attn1 = ChannelAttentionBlock(n_feat, kernel_size,
-                                                reduction, bias=bias, act=act)
-        self.skip_attn2 = ChannelAttentionBlock(
-            n_feat + scale_unetfeats, kernel_size,
-            reduction, bias=bias, act=act
+        self.skip_attn1 = CAB(n_feat, kernel_size, reduction, bias=bias, act=act)
+        self.skip_attn2 = CAB(
+            n_feat + scale_unetfeats, kernel_size, reduction, bias=bias, act=act
         )
 
         self.up21 = SkipUpSample(n_feat, scale_unetfeats)
@@ -219,11 +217,9 @@ class DownSample(nn.Module):
     def __init__(self, in_channels, s_factor):
         super(DownSample, self).__init__()
         self.down = nn.Sequential(
-            nn.Upsample(
-                scale_factor=0.5, mode="bilinear", align_corners=False),
+            nn.Upsample(scale_factor=0.5, mode="bilinear", align_corners=False),
             nn.Conv2d(
-                in_channels, in_channels + s_factor, 1, stride=1,
-                padding=0, bias=False
+                in_channels, in_channels + s_factor, 1, stride=1, padding=0, bias=False
             ),
         )
 
@@ -238,8 +234,7 @@ class UpSample(nn.Module):
         self.up = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
             nn.Conv2d(
-                in_channels + s_factor, in_channels, 1, stride=1, padding=0,
-                bias=False
+                in_channels + s_factor, in_channels, 1, stride=1, padding=0, bias=False
             ),
         )
 
@@ -254,8 +249,7 @@ class SkipUpSample(nn.Module):
         self.up = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
             nn.Conv2d(
-                in_channels + s_factor, in_channels, 1, stride=1, padding=0,
-                bias=False
+                in_channels + s_factor, in_channels, 1, stride=1, padding=0, bias=False
             ),
         )
 
@@ -265,13 +259,12 @@ class SkipUpSample(nn.Module):
         return x
 
 
-class OrgResolutionBlock(nn.Module):
+class ORB(nn.Module):
     def __init__(self, n_feat, kernel_size, reduction, act, bias, num_cab):
-        super(OrgResolutionBlock, self).__init__()
+        super(ORB, self).__init__()
         modules_body = []
         modules_body = [
-            ChannelAttentionBlock(n_feat, kernel_size, reduction,
-                                  bias=bias, act=act)
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act)
             for _ in range(num_cab)
         ]
         modules_body.append(conv(n_feat, n_feat, kernel_size))
@@ -298,17 +291,14 @@ class ORSNet(nn.Module):
     ):
         super(ORSNet, self).__init__()
 
-        self.orb1 = OrgResolutionBlock(
-            n_feat + scale_orsnetfeats, kernel_size, reduction,
-            act, bias, num_cab
+        self.orb1 = ORB(
+            n_feat + scale_orsnetfeats, kernel_size, reduction, act, bias, num_cab
         )
-        self.orb2 = OrgResolutionBlock(
-            n_feat + scale_orsnetfeats, kernel_size, reduction,
-            act, bias, num_cab
+        self.orb2 = ORB(
+            n_feat + scale_orsnetfeats, kernel_size, reduction, act, bias, num_cab
         )
-        self.orb3 = OrgResolutionBlock(
-            n_feat + scale_orsnetfeats, kernel_size, reduction,
-            act, bias, num_cab
+        self.orb3 = ORB(
+            n_feat + scale_orsnetfeats, kernel_size, reduction, act, bias, num_cab
         )
 
         self.up_enc1 = UpSample(n_feat, scale_unetfeats)
@@ -345,9 +335,7 @@ class ORSNet(nn.Module):
 
     def forward(self, x, encoder_outs, decoder_outs):
         x = self.orb1(x)
-        x += self.conv_enc1(
-            encoder_outs[0]
-        ) + self.conv_dec1(decoder_outs[0])
+        x += self.conv_enc1(encoder_outs[0]) + self.conv_dec1(decoder_outs[0])
 
         x = self.orb2(x)
         x = (
@@ -384,32 +372,27 @@ class MPRNet(nn.Module):
         act = nn.PReLU()
         self.shallow_feat1 = nn.Sequential(
             conv(in_c, n_feat, kernel_size, bias=bias),
-            ChannelAttentionBlock(n_feat, kernel_size, reduction, bias=bias,
-                                  act=act),
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act),
         )
         self.shallow_feat2 = nn.Sequential(
             conv(in_c, n_feat, kernel_size, bias=bias),
-            ChannelAttentionBlock(n_feat, kernel_size, reduction, bias=bias,
-                                  act=act),
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act),
         )
         self.shallow_feat3 = nn.Sequential(
             conv(in_c, n_feat, kernel_size, bias=bias),
-            ChannelAttentionBlock(n_feat, kernel_size, reduction, bias=bias,
-                                  act=act),
+            CAB(n_feat, kernel_size, reduction, bias=bias, act=act),
         )
 
         # Cross Stage Feature Fusion (CSFF)
         self.stage1_encoder = Encoder(
-            n_feat, kernel_size, reduction, act, bias, scale_unetfeats,
-            csff=False
+            n_feat, kernel_size, reduction, act, bias, scale_unetfeats, csff=False
         )
         self.stage1_decoder = Decoder(
             n_feat, kernel_size, reduction, act, bias, scale_unetfeats
         )
 
         self.stage2_encoder = Encoder(
-            n_feat, kernel_size, reduction, act, bias, scale_unetfeats,
-            csff=True
+            n_feat, kernel_size, reduction, act, bias, scale_unetfeats, csff=True
         )
         self.stage2_decoder = Decoder(
             n_feat, kernel_size, reduction, act, bias, scale_unetfeats
@@ -426,15 +409,14 @@ class MPRNet(nn.Module):
             num_cab,
         )
 
-        self.sam12 = SupervisedAttention(n_feat, kernel_size=1, bias=bias)
-        self.sam23 = SupervisedAttention(n_feat, kernel_size=1, bias=bias)
+        self.sam12 = SAM(n_feat, kernel_size=1, bias=bias)
+        self.sam23 = SAM(n_feat, kernel_size=1, bias=bias)
 
         self.concat12 = conv(n_feat * 2, n_feat, kernel_size, bias=bias)
         self.concat23 = conv(
             n_feat * 2, n_feat + scale_orsnetfeats, kernel_size, bias=bias
         )
-        self.tail = conv(n_feat + scale_orsnetfeats, out_c,
-                         kernel_size, bias=bias)
+        self.tail = conv(n_feat + scale_orsnetfeats, out_c, kernel_size, bias=bias)
 
     def forward(self, x3_img):
         # Original-resolution Image for Stage 3
@@ -444,14 +426,14 @@ class MPRNet(nn.Module):
         # Multi-Patch Hierarchy: Split Image into four non-overlapping patches
 
         # Two Patches for Stage 2
-        x2top_img = x3_img[:, :, 0: int(H / 2), :]
-        x2bot_img = x3_img[:, :, int(H / 2): H, :]
+        x2top_img = x3_img[:, :, 0 : int(H / 2), :]
+        x2bot_img = x3_img[:, :, int(H / 2) : H, :]
 
         # Four Patches for Stage 1
-        x1ltop_img = x2top_img[:, :, :, 0: int(W / 2)]
-        x1rtop_img = x2top_img[:, :, :, int(W / 2): W]
-        x1lbot_img = x2bot_img[:, :, :, 0: int(W / 2)]
-        x1rbot_img = x2bot_img[:, :, :, int(W / 2): W]
+        x1ltop_img = x2top_img[:, :, :, 0 : int(W / 2)]
+        x1rtop_img = x2top_img[:, :, :, int(W / 2) : W]
+        x1lbot_img = x2bot_img[:, :, :, 0 : int(W / 2)]
+        x1rbot_img = x2bot_img[:, :, :, int(W / 2) : W]
 
         x1ltop = self.shallow_feat1(x1ltop_img)
         x1rtop = self.shallow_feat1(x1rtop_img)
@@ -463,10 +445,8 @@ class MPRNet(nn.Module):
         feat1_lbot = self.stage1_encoder(x1lbot)
         feat1_rbot = self.stage1_encoder(x1rbot)
 
-        feat1_top = [
-            torch.cat((k, v), 3) for k, v in zip(feat1_ltop, feat1_rtop)]
-        feat1_bot = [
-            torch.cat((k, v), 3) for k, v in zip(feat1_lbot, feat1_rbot)]
+        feat1_top = [torch.cat((k, v), 3) for k, v in zip(feat1_ltop, feat1_rtop)]
+        feat1_bot = [torch.cat((k, v), 3) for k, v in zip(feat1_lbot, feat1_rbot)]
 
         res1_top = self.stage1_decoder(feat1_top)
         res1_bot = self.stage1_decoder(feat1_bot)

@@ -10,7 +10,7 @@ PATHS = [
     "archive/val/val",
     "archive/test/",
 ]
-for outpaths in ['denoised/train/train', 'denoised/val/val']:
+for outpaths in ['denoised/train/train', 'denoised/val/val', 'denoised/test']:
     os.makedirs(outpaths, exist_ok=True)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

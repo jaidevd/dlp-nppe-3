@@ -1,15 +1,23 @@
 # dlp-nppe-3
 
+
+**Note**: The submission is also available as a github repository at:
+
+[`https://github.com/jaidevd/dlp-nppe-3`](https://github.com/jaidevd/dlp-nppe-3)
+
 This super resolution task is attempted in two stages:
 
-**Stage 1**: Image denoising
+**Stage 1**: Image denoising (Notebook: [`01_denoise.ipynb`](01_denoise.ipynb))
 
-**Stage 2**: Image upsampling
+**Stage 2**: Image upsampling (Notebook: [`02_superres.ipynb`](02_superres.ipynb))
 
 To reproduce the results, run the following steps exactly in the specified
 order.
 
 ### Stage 1 - Image Denoising
+
+The consolidated steps for this stage are present in the `01_denoise.ipynb`
+notebook.
 
 The training data for this stage is the original low-res, noisy images paired
 with the downsampled version of the high-res images.
@@ -50,6 +58,9 @@ To train and save the denoising model, do the following steps:
 
 
 ### Stage 2 - Image Super-resolution
+
+The consolidated steps for this stage are present in the `02_superres.ipynb`
+notebook.
 
 To run an SRGAN on the super-resolution task, do the following steps:
 
